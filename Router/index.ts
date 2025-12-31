@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import clientRoutes from "../Module/Client/Client.routes";
 
 const router = Router();
 
@@ -8,8 +9,8 @@ router.get("/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "ok", message: "Server is running" });
 });
 
-// Placeholder for future routes
-// Example: router.use("/users", userRoutes);
+// Client routes
+router.use("/client", clientRoutes);
 
 export default router;
 
