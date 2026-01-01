@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import Client from "../../entity/Client";
+import User from "../../entity/User";
 import { registerSchema, loginSchema } from "./validation";
 import { AppConfig } from "../../config/app.config";
 import { AuthRequest } from "../../middleware/auth.middleware";
@@ -20,11 +20,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { firstName, lastName, email, password, phone, address } = value;
+    const { firstName, lastName, email, password, phone, address, role } = value;
 
-    // Check if client already exists
-    const existingClient = await Client.findOne({ email: email.toLowerCase() });
-    if (existingClient) {
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
       res.status(409).json({
         success: false,
         message: "Email already registered",
@@ -36,21 +36,22 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create new client
-    const newClient = new Client({
+    // Create new user
+    const newUser = new User({
       firstName,
       lastName,
       email: email.toLowerCase(),
       password: hashedPassword,
       phone,
       address,
+      role: role || "client",
     });
 
-    await newClient.save();
+    await newUser.save();
 
     // Generate JWT token
     const token = jwt.sign(
-      { id: newClient._id, email: newClient.email },
+      { id: newUser._id, email: newUser.email, role: newUser.role },
       AppConfig.JwtSecret,
       { expiresIn: "7d" }
     );
@@ -58,14 +59,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Return success response (don't send password)
     res.status(201).json({
       success: true,
-      message: "Client registered successfully",
+      message: "User registered successfully",
       data: {
-        id: newClient._id,
-        firstName: newClient.firstName,
-        lastName: newClient.lastName,
-        email: newClient.email,
-        phone: newClient.phone,
-        address: newClient.address,
+        id: newUser._id,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        email: newUser.email,
+        phone: newUser.phone,
+        address: newUser.address,
+        role: newUser.role,
       },
       token,
     });
@@ -94,9 +96,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const { email, password } = value;
 
-    // Find client by email and include password field
-    const client = await Client.findOne({ email: email.toLowerCase() }).select("+password");
-    if (!client) {
+    // Find user by email and include password field
+    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+    if (!user) {
       res.status(401).json({
         success: false,
         message: "Invalid email or password",
@@ -105,7 +107,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Compare password
-    const isPasswordValid = await bcrypt.compare(password, client.password);
+    const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       res.status(401).json({
         success: false,
@@ -116,7 +118,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { id: client._id, email: client.email },
+      { id: user._id, email: user.email, role: user.role },
       AppConfig.JwtSecret,
       { expiresIn: "7d" }
     );
@@ -126,12 +128,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       success: true,
       message: "Login successful",
       data: {
-        id: client._id,
-        firstName: client.firstName,
-        lastName: client.lastName,
-        email: client.email,
-        phone: client.phone,
-        address: client.address,
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        role: user.role,
+        status: user.status,
       },
       token,
     });
@@ -147,8 +151,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 // Get current user profile
 export const getProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const client = await Client.findById(req.userId);
-    if (!client) {
+    const user = await User.findById(req.userId);
+    if (!user) {
       res.status(404).json({
         success: false,
         message: "User not found",
@@ -159,14 +163,15 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
     res.status(200).json({
       success: true,
       data: {
-        id: client._id,
-        firstName: client.firstName,
-        lastName: client.lastName,
-        email: client.email,
-        phone: client.phone,
-        address: client.address,
-        createdAt: client.createdAt,
-        updatedAt: client.updatedAt,
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        role: user.role,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
       },
     });
   } catch (err: unknown) {
@@ -192,8 +197,8 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const client = await Client.findById(req.userId);
-    if (!client) {
+    const user = await User.findById(req.userId);
+    if (!user) {
       res.status(404).json({
         success: false,
         message: "User not found",
@@ -202,24 +207,25 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     // Update fields
-    client.firstName = firstName;
-    client.lastName = lastName;
-    if (phone) client.phone = phone;
-    if (address) client.address = address;
+    user.firstName = firstName;
+    user.lastName = lastName;
+    if (phone) user.phone = phone;
+    if (address) user.address = address;
 
-    await client.save();
+    await user.save();
 
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
       data: {
-        id: client._id,
-        firstName: client.firstName,
-        lastName: client.lastName,
-        email: client.email,
-        phone: client.phone,
-        address: client.address,
-        updatedAt: client.updatedAt,
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        role: user.role,
+        updatedAt: user.updatedAt,
       },
     });
   } catch (err: unknown) {
@@ -252,9 +258,9 @@ export const updatePassword = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    // Find client with password field
-    const client = await Client.findById(req.userId).select("+password");
-    if (!client) {
+    // Find user with password field
+    const user = await User.findById(req.userId).select("+password");
+    if (!user) {
       res.status(404).json({
         success: false,
         message: "User not found",
@@ -263,7 +269,7 @@ export const updatePassword = async (req: AuthRequest, res: Response): Promise<v
     }
 
     // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, client.password);
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
     if (!isPasswordValid) {
       res.status(401).json({
         success: false,
@@ -275,8 +281,8 @@ export const updatePassword = async (req: AuthRequest, res: Response): Promise<v
     // Hash new password
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-    client.password = hashedPassword;
-    await client.save();
+    user.password = hashedPassword;
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -322,6 +328,35 @@ export const getDevices = async (req: AuthRequest, res: Response): Promise<void>
     });
   } catch (err: unknown) {
     console.error("Get devices error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Get current user role
+export const getUserRole = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.userId).select("role email");
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Get user role error:", err);
     res.status(500).json({
       success: false,
       message: "Internal server error",

@@ -43,6 +43,7 @@ app.options("*", cors(corsOptions));
 app.use(express.static('uploads/images'));
 app.use(express.static("uploads/pdf"));
 app.use(express.static("uploads/video"));
+app.use(express.static("uploads/documents"));
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({extended:true , limit:'100mb'}))
 app.use(express.json());

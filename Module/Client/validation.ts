@@ -57,6 +57,12 @@ export const registerSchema = Joi.object({
       "string.min": "Address must be at least 5 characters",
       "string.max": "Address cannot exceed 200 characters",
     }),
+  role: Joi.string()
+    .valid("client", "supplier", "admin")
+    .default("client")
+    .messages({
+      "any.only": "Role must be one of: client, supplier, admin",
+    }),
 });
 
 // Login validation schema

@@ -5,6 +5,7 @@ import { AppConfig } from "../config/app.config";
 export interface AuthRequest extends Request {
   userId?: string;
   userEmail?: string;
+  userRole?: string;
 }
 
 export const authenticateToken = (

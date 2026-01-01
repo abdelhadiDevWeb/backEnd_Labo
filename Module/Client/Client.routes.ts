@@ -5,7 +5,8 @@ import {
   getProfile, 
   updateProfile, 
   updatePassword, 
-  getDevices 
+  getDevices,
+  getUserRole
 } from "./Client.controller";
 import { authenticateToken } from "../../middleware/auth.middleware";
 
@@ -20,6 +21,7 @@ router.get("/profile", authenticateToken, getProfile);
 router.put("/profile", authenticateToken, updateProfile);
 router.put("/password", authenticateToken, updatePassword);
 router.get("/devices", authenticateToken, getDevices);
+router.get("/role", authenticateToken, getUserRole);
 
 export default router;
 
