@@ -10,6 +10,7 @@ export interface IUser extends Document {
   address: string;
   role: string;
   status: boolean;
+  laboType?: string; // Optional: "Labo médical" or "labo d'ana pathologies" (required for clients, optional for suppliers)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +70,12 @@ const UserSchema = new Schema<IUser>(
     status: {
       type: Boolean,
       default: false,
+    },
+    laboType: {
+      type: String,
+      enum: ["Labo médical", "labo d'ana pathologies"],
+      required: false, // Optional in schema, but will be validated in controller for clients
+      trim: true,
     },
   },
   {

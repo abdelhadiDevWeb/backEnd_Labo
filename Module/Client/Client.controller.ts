@@ -20,7 +20,24 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { firstName, lastName, email, password, phone, address, role } = value;
+    const { firstName, lastName, email, password, phone, address, role, laboType } = value;
+
+    // Validate laboType for clients
+    if (role === "client" && !laboType) {
+      res.status(400).json({
+        success: false,
+        message: "Le type de laboratoire est requis pour les clients",
+      });
+      return;
+    }
+
+    if (role === "client" && laboType !== "Labo médical" && laboType !== "labo d'ana pathologies") {
+      res.status(400).json({
+        success: false,
+        message: "Le type de laboratoire doit être 'Labo médical' ou 'labo d'ana pathologies'",
+      });
+      return;
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -45,6 +62,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       phone,
       address,
       role: role || "client",
+      status: false, // Default status is false, needs admin approval
+      laboType: role === "client" ? laboType : undefined, // Only set for clients
     });
 
     await newUser.save();
@@ -68,6 +87,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         phone: newUser.phone,
         address: newUser.address,
         role: newUser.role,
+        laboType: newUser.laboType,
       },
       token,
     });
@@ -116,12 +136,19 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      AppConfig.JwtSecret,
-      { expiresIn: "7d" }
-    );
+    // Generate JWT token (include laboType for clients)
+    const tokenPayload: any = {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+    };
+    
+    // Include laboType if user is a client
+    if (user.role === "client" && user.laboType) {
+      tokenPayload.laboType = user.laboType;
+    }
+    
+    const token = jwt.sign(tokenPayload, AppConfig.JwtSecret, { expiresIn: "7d" });
 
     // Return success response
     res.status(200).json({
@@ -136,6 +163,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         address: user.address,
         role: user.role,
         status: user.status,
+        laboType: user.laboType,
       },
       token,
     });
@@ -357,6 +385,133 @@ export const getUserRole = async (req: AuthRequest, res: Response): Promise<void
     });
   } catch (err: unknown) {
     console.error("Get user role error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Upload client documents (identity only)
+export const uploadClientDocuments = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId;
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+    // Security: Ensure only identity field is uploaded (reject other fields)
+    if (!files || !files.identity) {
+      res.status(400).json({
+        success: false,
+        message: "Identity document is required",
+      });
+      return;
+    }
+
+    // Security: Check if any other fields besides identity were uploaded
+    const allowedFields = ["identity"];
+    const uploadedFields = Object.keys(files);
+    const unauthorizedFields = uploadedFields.filter(field => !allowedFields.includes(field));
+    
+    if (unauthorizedFields.length > 0) {
+      res.status(400).json({
+        success: false,
+        message: `Clients can only upload identity document. Unauthorized fields: ${unauthorizedFields.join(", ")}`,
+      });
+      return;
+    }
+
+    const identityFile = files.identity[0];
+
+    // Security: Validate file type (must be PDF)
+    if (identityFile.mimetype !== "application/pdf") {
+      res.status(400).json({
+        success: false,
+        message: "Identity file must be PDF format",
+      });
+      return;
+    }
+
+    // Security: Validate file size (max 5MB)
+    const maxFileSize = 5 * 1024 * 1024; // 5MB
+    if (identityFile.size > maxFileSize) {
+      res.status(400).json({
+        success: false,
+        message: "File size must not exceed 5MB",
+      });
+      return;
+    }
+
+    // Security: Validate file extension
+    const allowedExtensions = [".pdf"];
+    const fileExt = identityFile.originalname.toLowerCase().substring(identityFile.originalname.lastIndexOf("."));
+    if (!allowedExtensions.includes(fileExt)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid file extension. Only PDF files are allowed",
+      });
+      return;
+    }
+
+    // Check if user exists and is a client
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+      return;
+    }
+
+    if (user.role !== "client") {
+      res.status(403).json({
+        success: false,
+        message: "Only clients can upload identity document",
+      });
+      return;
+    }
+
+    // Import Papier model
+    const Papier = (await import("../../entity/Papier")).default;
+
+    // Check if documents already exist for this user
+    const existingPapier = await Papier.findOne({ id_user: userId });
+    if (existingPapier) {
+      // Update existing document
+      existingPapier.type = "client";
+      existingPapier.identity = identityFile.path;
+      await existingPapier.save();
+
+      res.status(200).json({
+        success: true,
+        message: "Document updated successfully",
+        data: {
+          id: existingPapier._id,
+          type: existingPapier.type,
+          identity: existingPapier.identity,
+        },
+      });
+    } else {
+      // Create new document record
+      const newPapier = new Papier({
+        id_user: userId,
+        type: "client",
+        identity: identityFile.path,
+      });
+
+      await newPapier.save();
+
+      res.status(201).json({
+        success: true,
+        message: "Document uploaded successfully",
+        data: {
+          id: newPapier._id,
+          type: newPapier.type,
+          identity: newPapier.identity,
+        },
+      });
+    }
+  } catch (err: unknown) {
+    console.error("Upload client documents error:", err);
     res.status(500).json({
       success: false,
       message: "Internal server error",

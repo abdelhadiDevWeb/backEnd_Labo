@@ -6,6 +6,7 @@ export interface AuthRequest extends Request {
   userId?: string;
   userEmail?: string;
   userRole?: string;
+  userLaboType?: string;
 }
 
 export const authenticateToken = (
@@ -37,6 +38,8 @@ export const authenticateToken = (
       if (decoded && typeof decoded === "object" && "id" in decoded) {
         req.userId = decoded.id as string;
         req.userEmail = decoded.email as string;
+        req.userRole = decoded.role as string;
+        req.userLaboType = decoded.laboType as string | undefined;
         next();
       } else {
         res.status(403).json({

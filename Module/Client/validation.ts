@@ -63,6 +63,19 @@ export const registerSchema = Joi.object({
     .messages({
       "any.only": "Role must be one of: client, supplier, admin",
     }),
+  laboType: Joi.string()
+    .valid("Labo médical", "labo d'ana pathologies")
+    .when("role", {
+      is: "client",
+      then: Joi.required().messages({
+        "any.only": "Le type de laboratoire doit être 'Labo médical' ou 'labo d'ana pathologies'",
+        "any.required": "Le type de laboratoire est requis pour les clients",
+      }),
+      otherwise: Joi.optional(),
+    })
+    .messages({
+      "any.only": "Le type de laboratoire doit être 'Labo médical' ou 'labo d'ana pathologies'",
+    }),
 });
 
 // Login validation schema

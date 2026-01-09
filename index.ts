@@ -1,5 +1,6 @@
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
 // @ts-ignore - Express types issue with ESNext modules
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -12,6 +13,8 @@ import  {type Request , type Response , type NextFunction}  from 'express'
 import cookieParser from 'cookie-parser'
 import http from "http";
 import cors from 'cors'
+import { Server as SocketIOServer } from "socket.io";
+import jwt from "jsonwebtoken";
  
 
 
@@ -22,6 +25,56 @@ import cors from 'cors'
 
 const app = express();
 const server = http.createServer(app);
+
+// Initialize Socket.io
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5173",
+    ],
+    credentials: true,
+    methods: ["GET", "POST"],
+  },
+});
+
+// Socket.io authentication and connection handling
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error("Authentication error"));
+  }
+
+  try {
+    const decoded = jwt.verify(token, AppConfig.JwtSecret) as any;
+    socket.data.userId = decoded.id;
+    socket.data.userRole = decoded.role;
+    next();
+  } catch (err) {
+    next(new Error("Authentication error"));
+  }
+});
+
+io.on("connection", (socket) => {
+  const userId = socket.data.userId;
+  const userRole = socket.data.userRole;
+
+  if (userRole === "supplier") {
+    // Join supplier room for notifications
+    socket.join(`supplier_${userId}`);
+    console.log(`Supplier ${userId} connected to socket`);
+  } else if (userRole === "client") {
+    // Join client room for notifications
+    socket.join(`client_${userId}`);
+    console.log(`Client ${userId} connected to socket`);
+  }
+
+  socket.on("disconnect", () => {
+    console.log(`User ${userId} disconnected`);
+  });
+});
 
 
 const corsOptions = {
@@ -44,11 +97,19 @@ app.use(express.static('uploads/images'));
 app.use(express.static("uploads/pdf"));
 app.use(express.static("uploads/video"));
 app.use(express.static("uploads/documents"));
+app.use(express.static("uploads/excel"));
+app.use(express.static("uploads/products/images"));
+app.use(express.static("uploads/products/videos"));
+app.use(express.static("uploads/profile"));
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({extended:true , limit:'100mb'}))
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"))
+);
 
 
 // app.get('/test' , (req:Request , res:Response)=>{
@@ -118,6 +179,10 @@ ValidatAppConfig(async () => {
   try {
     // Connect to MongoDB
     await connectDatabase();
+
+    // Set Socket.io instance in Commande controller
+    const { setSocketIO } = await import("./Module/Commande/Commande.controller");
+    setSocketIO(io);
 
     // Run Server
     server.listen(AppConfig.PORT, () => {
