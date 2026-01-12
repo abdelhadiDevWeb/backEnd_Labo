@@ -4,6 +4,8 @@ import {
   getClientOrders,
   getSupplierOrders,
   updateOrderStatus,
+  getSupplierStatistics,
+  getSupplierDetailedStatistics,
 } from "./Commande.controller";
 import { authenticateToken } from "../../middleware/auth.middleware";
 import { requireClient } from "../../middleware/role.middleware";
@@ -22,6 +24,12 @@ router.get("/client", requireClient, getClientOrders);
 
 // Get supplier orders
 router.get("/supplier", requireSupplier, getSupplierOrders);
+
+// Get supplier statistics
+router.get("/supplier/statistics", requireSupplier, getSupplierStatistics);
+
+// Get detailed supplier statistics (for statistics page)
+router.get("/supplier/statistics/detailed", requireSupplier, getSupplierDetailedStatistics);
 
 // Update order status (suppliers only)
 router.put("/:orderId/status", requireSupplier, updateOrderStatus);
