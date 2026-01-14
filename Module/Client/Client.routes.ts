@@ -9,7 +9,12 @@ import {
   updatePassword, 
   getDevices,
   getUserRole,
-  uploadClientDocuments
+  uploadClientDocuments,
+  requestPasswordReset,
+  verifyPasswordResetCode,
+  resetPassword,
+  refreshToken,
+  createProblem,
 } from "./Client.controller";
 import { authenticateToken } from "../../middleware/auth.middleware";
 
@@ -47,6 +52,11 @@ const upload = multer({
 // Public routes
 router.post("/register", register);
 router.post("/login", login);
+router.post("/refresh-token", refreshToken);
+router.post("/forgot-password", requestPasswordReset);
+router.post("/verify-reset-code", verifyPasswordResetCode);
+router.post("/reset-password", resetPassword);
+router.post("/support", createProblem);
 
 // Protected routes (require authentication)
 router.get("/profile", authenticateToken, getProfile);

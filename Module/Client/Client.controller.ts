@@ -1,10 +1,22 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import User from "../../entity/User";
+import PasswordReset from "../../entity/PasswordReset";
+import Abonnement from "../../entity/Abonnement";
+import RefreshToken from "../../entity/RefreshToken";
+import Problem from "../../entity/Problem";
 import { registerSchema, loginSchema } from "./validation";
+
+// Socket.io instance (will be set from index.ts)
+let io: any = null;
+export const setSocketIO = (socketIO: any) => {
+  io = socketIO;
+};
 import { AppConfig } from "../../config/app.config";
 import { AuthRequest } from "../../middleware/auth.middleware";
+import { sendPasswordResetCode, sendProblemNotificationEmail } from "../../utils/email.service";
 
 // Register function
 export const register = async (req: Request, res: Response): Promise<void> => {
@@ -136,6 +148,85 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Check status for client and supplier roles
+    if ((user.role === "client" || user.role === "supplier") && !user.status) {
+      res.status(403).json({
+        success: false,
+        message: "account_not_activated",
+        data: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          address: user.address,
+          role: user.role,
+          status: user.status,
+          laboType: user.laboType,
+        },
+      });
+      return;
+    }
+
+    // Check subscription for client and supplier with status true
+    if ((user.role === "client" || user.role === "supplier") && user.status) {
+      const subscription = await Abonnement.findOne({
+        id_user: user._id,
+        status: true,
+      });
+
+      if (subscription) {
+        // Check if subscription end date is still valid
+        const now = new Date();
+        if (subscription.end < now) {
+          // Subscription expired - update subscription and user status to false
+          subscription.status = false;
+          await subscription.save();
+
+          user.status = false;
+          await user.save();
+
+          res.status(403).json({
+            success: false,
+            message: "subscription_expired",
+            data: {
+              id: user._id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              phone: user.phone,
+              address: user.address,
+              role: user.role,
+              status: user.status,
+              laboType: user.laboType,
+            },
+          });
+          return;
+        }
+      } else {
+        // No active subscription found
+        user.status = false;
+        await user.save();
+
+        res.status(403).json({
+          success: false,
+          message: "no_subscription",
+          data: {
+            id: user._id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phone,
+            address: user.address,
+            role: user.role,
+            status: user.status,
+            laboType: user.laboType,
+          },
+        });
+        return;
+      }
+    }
+
     // Generate JWT token (include laboType for clients)
     const tokenPayload: any = {
       id: user._id,
@@ -149,6 +240,22 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
     
     const token = jwt.sign(tokenPayload, AppConfig.JwtSecret, { expiresIn: "7d" });
+
+    // Generate refresh token
+    const refreshTokenValue = crypto.randomBytes(64).toString("hex");
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 5); // 5 days from now
+
+    // Delete old refresh tokens for this user
+    await RefreshToken.deleteMany({ id_user: user._id });
+
+    // Save new refresh token
+    const refreshToken = new RefreshToken({
+      id_user: user._id,
+      token: refreshTokenValue,
+      expiresAt,
+    });
+    await refreshToken.save();
 
     // Return success response
     res.status(200).json({
@@ -166,6 +273,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         laboType: user.laboType,
       },
       token,
+      refreshToken: refreshTokenValue,
     });
   } catch (err: unknown) {
     console.error("Login error:", err);
@@ -392,6 +500,188 @@ export const getUserRole = async (req: AuthRequest, res: Response): Promise<void
   }
 };
 
+// Request password reset (send code via email)
+export const requestPasswordReset = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+      return;
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Don't reveal if email exists or not for security
+      res.status(200).json({
+        success: true,
+        message: "Si cet email existe, un code de réinitialisation a été envoyé",
+      });
+      return;
+    }
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Set expiration (10 minutes)
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+    // Invalidate any existing codes for this email
+    await PasswordReset.updateMany(
+      { email: email.toLowerCase(), used: false },
+      { used: true }
+    );
+
+    // Create new password reset record
+    const passwordReset = new PasswordReset({
+      email: email.toLowerCase(),
+      code,
+      expiresAt,
+      used: false,
+    });
+
+    await passwordReset.save();
+
+    // Send email with code
+    const emailSent = await sendPasswordResetCode(email.toLowerCase(), code);
+
+    if (!emailSent) {
+      await PasswordReset.findByIdAndDelete(passwordReset._id);
+      res.status(500).json({
+        success: false,
+        message: "Erreur lors de l'envoi de l'email. Veuillez vérifier la configuration du serveur email ou réessayer plus tard.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Code de réinitialisation envoyé par email",
+    });
+  } catch (err: unknown) {
+    console.error("Request password reset error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Verify password reset code
+export const verifyPasswordResetCode = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      res.status(400).json({
+        success: false,
+        message: "Email and code are required",
+      });
+      return;
+    }
+
+    // Find valid password reset record
+    const passwordReset = await PasswordReset.findOne({
+      email: email.toLowerCase(),
+      code: code.trim(),
+      used: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!passwordReset) {
+      res.status(400).json({
+        success: false,
+        message: "Code invalide ou expiré",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Code vérifié avec succès",
+      data: {
+        resetToken: passwordReset._id.toString(), // Use the document ID as a token
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Verify password reset code error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Reset password with verified code
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      res.status(400).json({
+        success: false,
+        message: "Reset token and new password are required",
+      });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      res.status(400).json({
+        success: false,
+        message: "Le mot de passe doit contenir au moins 8 caractères",
+      });
+      return;
+    }
+
+    // Find password reset record
+    const passwordReset = await PasswordReset.findById(resetToken);
+
+    if (!passwordReset || passwordReset.used || passwordReset.expiresAt < new Date()) {
+      res.status(400).json({
+        success: false,
+        message: "Code invalide ou expiré",
+      });
+      return;
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: passwordReset.email }).select("+password");
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+      return;
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    user.password = hashedPassword;
+    await user.save();
+
+    // Mark password reset as used
+    passwordReset.used = true;
+    await passwordReset.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Mot de passe réinitialisé avec succès",
+    });
+  } catch (err: unknown) {
+    console.error("Reset password error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 // Upload client documents (identity only)
 export const uploadClientDocuments = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -512,6 +802,130 @@ export const uploadClientDocuments = async (req: AuthRequest, res: Response): Pr
     }
   } catch (err: unknown) {
     console.error("Upload client documents error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Refresh token
+export const refreshToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken: refreshTokenValue } = req.body;
+
+    if (!refreshTokenValue) {
+      res.status(400).json({
+        success: false,
+        message: "Refresh token is required",
+      });
+      return;
+    }
+
+    // Find the refresh token in the database
+    const refreshTokenDoc = await RefreshToken.findOne({
+      token: refreshTokenValue,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!refreshTokenDoc) {
+      res.status(401).json({
+        success: false,
+        message: "Invalid or expired refresh token",
+      });
+      return;
+    }
+
+    // Get the user
+    const user = await User.findById(refreshTokenDoc.id_user);
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+      return;
+    }
+
+    // Generate new access token
+    const tokenPayload: any = {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+    };
+    
+    // Include laboType if user is a client
+    if (user.role === "client" && user.laboType) {
+      tokenPayload.laboType = user.laboType;
+    }
+    
+    const token = jwt.sign(tokenPayload, AppConfig.JwtSecret, { expiresIn: "7d" });
+
+    res.status(200).json({
+      success: true,
+      message: "Token refreshed successfully",
+      token,
+    });
+  } catch (err: unknown) {
+    console.error("Refresh token error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Create support problem
+export const createProblem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, phone, message } = req.body;
+
+    if (!email || !phone || !message) {
+      res.status(400).json({
+        success: false,
+        message: "Email, phone, and message are required",
+      });
+      return;
+    }
+
+    // Create problem
+    const newProblem = new Problem({
+      email: email.toLowerCase().trim(),
+      phone: phone.trim(),
+      message: message.trim(),
+      is_read: false,
+    });
+
+    await newProblem.save();
+
+    // Send email notification to company
+    sendProblemNotificationEmail(newProblem.email, newProblem.phone, newProblem.message).catch((err) => {
+      console.error("Error sending problem notification email:", err);
+      // Don't fail the request if email fails
+    });
+
+    // Emit to all admins via Socket.io
+    if (io) {
+      io.to("admin").emit("newProblem", {
+        problemId: newProblem._id.toString(),
+        email: newProblem.email,
+        phone: newProblem.phone,
+        message: newProblem.message,
+        createdAt: newProblem.createdAt,
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Problem submitted successfully",
+      data: {
+        id: newProblem._id,
+        email: newProblem.email,
+        phone: newProblem.phone,
+        message: newProblem.message,
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Create problem error:", err);
     res.status(500).json({
       success: false,
       message: "Internal server error",

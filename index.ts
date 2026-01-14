@@ -1,11 +1,16 @@
 import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
+import fs from "fs";
 // @ts-ignore - Express types issue with ESNext modules
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { connectDatabase } from "./Database/Mongoose";
-import "dotenv/config";
+import dotenv from "dotenv";
+
+// Load .env.local first, then .env (local takes precedence)
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config(); // This will load .env but won't override .env.local values
 import { AppConfig, ValidatAppConfig } from "./config/app.config";
 import Allversion from "./Router/index";
 import crypto from 'crypto'
@@ -69,6 +74,10 @@ io.on("connection", (socket) => {
     // Join client room for notifications
     socket.join(`client_${userId}`);
     console.log(`Client ${userId} connected to socket`);
+  } else if (userRole === "admin") {
+    // Join admin room for notifications
+    socket.join("admin");
+    console.log(`Admin ${userId} connected to socket`);
   }
 
   socket.on("disconnect", () => {
@@ -100,7 +109,28 @@ app.use(express.static("uploads/documents"));
 app.use(express.static("uploads/excel"));
 app.use(express.static("uploads/products/images"));
 app.use(express.static("uploads/products/videos"));
+// Ensure upload directories exist
+const uploadDirs = [
+  "uploads/images",
+  "uploads/pdf",
+  "uploads/video",
+  "uploads/documents",
+  "uploads/excel",
+  "uploads/products/images",
+  "uploads/products/videos",
+  "uploads/profile",
+  "uploads/profile-images",
+];
+
+uploadDirs.forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`Created directory: ${dir}`);
+  }
+});
+
 app.use(express.static("uploads/profile"));
+app.use(express.static("uploads/profile-images"));
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({extended:true , limit:'100mb'}))
 app.use(express.json());
@@ -180,9 +210,12 @@ ValidatAppConfig(async () => {
     // Connect to MongoDB
     await connectDatabase();
 
-    // Set Socket.io instance in Commande controller
-    const { setSocketIO } = await import("./Module/Commande/Commande.controller");
-    setSocketIO(io);
+    // Set Socket.io instance in controllers
+    const { setSocketIO: setSocketIOCommande } = await import("./Module/Commande/Commande.controller");
+    setSocketIOCommande(io);
+    
+    const { setSocketIO: setSocketIOClient } = await import("./Module/Client/Client.controller");
+    setSocketIOClient(io);
 
     // Run Server
     server.listen(AppConfig.PORT, () => {

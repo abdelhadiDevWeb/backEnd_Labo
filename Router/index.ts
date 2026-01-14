@@ -5,6 +5,7 @@ import supplierRoutes from "../Module/Supplier/Supplier.routes";
 import productRoutes from "../Module/Product/Product.routes";
 import commandeRoutes from "../Module/Commande/Commande.routes";
 import notificationRoutes from "../Module/Notification/Notification.routes";
+import adminRoutes from "../Module/Admin/Admin.routes";
 
 const router = Router();
 
@@ -27,6 +28,9 @@ router.use("/commandes", commandeRoutes);
 
 // Notification routes
 router.use("/notifications", notificationRoutes);
+
+// Admin routes
+router.use("/admin", adminRoutes);
 
 export default router;
 
