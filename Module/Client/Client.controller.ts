@@ -7,6 +7,8 @@ import PasswordReset from "../../entity/PasswordReset";
 import Abonnement from "../../entity/Abonnement";
 import RefreshToken from "../../entity/RefreshToken";
 import Problem from "../../entity/Problem";
+import Rate from "../../entity/Rate";
+import Commande from "../../entity/Commande";
 import { registerSchema, loginSchema } from "./validation";
 
 // Socket.io instance (will be set from index.ts)
@@ -306,6 +308,9 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
         phone: user.phone,
         address: user.address,
         role: user.role,
+        rip_post: user.rip_post || "",
+        rip_bank: user.rip_bank || "",
+        methode_payment: user.methode_payment || [],
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -926,6 +931,250 @@ export const createProblem = async (req: Request, res: Response): Promise<void> 
     });
   } catch (err: unknown) {
     console.error("Create problem error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Create a rating for a supplier
+export const createRate = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Not authenticated",
+      });
+      return;
+    }
+
+    const { id_supplier, message, number } = req.body;
+
+    // Validate input
+    if (!id_supplier || !message || !number) {
+      res.status(400).json({
+        success: false,
+        message: "id_supplier, message, and number are required",
+      });
+      return;
+    }
+
+    if (number < 1 || number > 5) {
+      res.status(400).json({
+        success: false,
+        message: "Rating must be between 1 and 5",
+      });
+      return;
+    }
+
+    // Check if supplier exists
+    const supplier = await User.findById(id_supplier);
+    if (!supplier || supplier.role !== "supplier") {
+      res.status(404).json({
+        success: false,
+        message: "Supplier not found",
+      });
+      return;
+    }
+
+    // Check if user has purchased from this supplier (has at least one order)
+    const hasPurchased = await Commande.findOne({
+      idBuyer: userId,
+      idSupplier: id_supplier,
+      status: { $in: ["en cours", "on route", "arrived"] },
+    });
+
+    if (!hasPurchased) {
+      res.status(403).json({
+        success: false,
+        message: "You can only rate suppliers you have purchased from",
+      });
+      return;
+    }
+
+    // Check if user has already rated this supplier
+    const existingRate = await Rate.findOne({
+      id_rater: userId,
+      id_supplier: id_supplier,
+    });
+
+    if (existingRate) {
+      // Update existing rate
+      existingRate.message = message;
+      existingRate.number = number;
+      await existingRate.save();
+
+      res.status(200).json({
+        success: true,
+        message: "Rating updated successfully",
+        data: {
+          id: existingRate._id,
+          id_rater: existingRate.id_rater,
+          id_supplier: existingRate.id_supplier,
+          message: existingRate.message,
+          number: existingRate.number,
+          createdAt: existingRate.createdAt,
+        },
+      });
+      return;
+    }
+
+    // Create new rate
+    const newRate = new Rate({
+      id_rater: userId,
+      id_supplier: id_supplier,
+      message: message.trim(),
+      number: number,
+    });
+
+    await newRate.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Rating created successfully",
+      data: {
+        id: newRate._id,
+        id_rater: newRate.id_rater,
+        id_supplier: newRate.id_supplier,
+        message: newRate.message,
+        number: newRate.number,
+        createdAt: newRate.createdAt,
+      },
+    });
+  } catch (err: unknown) {
+    if ((err as any).code === 11000) {
+      // Duplicate key error (already rated)
+      res.status(409).json({
+        success: false,
+        message: "You have already rated this supplier",
+      });
+      return;
+    }
+    console.error("Create rate error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Get all ratings for a supplier
+export const getSupplierRatings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { supplierId } = req.params;
+
+    if (!supplierId) {
+      res.status(400).json({
+        success: false,
+        message: "Supplier ID is required",
+      });
+      return;
+    }
+
+    // Check if supplier exists
+    const supplier = await User.findById(supplierId);
+    if (!supplier || supplier.role !== "supplier") {
+      res.status(404).json({
+        success: false,
+        message: "Supplier not found",
+      });
+      return;
+    }
+
+    // Get all ratings for this supplier with rater details
+    const ratings = await Rate.find({ id_supplier: supplierId })
+      .populate("id_rater", "firstName lastName email")
+      .sort({ createdAt: -1 });
+
+    // Calculate average rating
+    const totalRatings = ratings.length;
+    const averageRating =
+      totalRatings > 0
+        ? ratings.reduce((sum, rate) => sum + rate.number, 0) / totalRatings
+        : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ratings: ratings.map((rate) => ({
+          id: rate._id,
+          rater: {
+            id: rate.id_rater._id,
+            firstName: (rate.id_rater as any).firstName,
+            lastName: (rate.id_rater as any).lastName,
+            email: (rate.id_rater as any).email,
+          },
+          message: rate.message,
+          number: rate.number,
+          createdAt: rate.createdAt,
+        })),
+        averageRating: averageRating.toFixed(2),
+        totalRatings: totalRatings,
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Get supplier ratings error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Check if user can rate a supplier (has purchased from them)
+export const canRateSupplier = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Not authenticated",
+      });
+      return;
+    }
+
+    const { supplierId } = req.params;
+
+    if (!supplierId) {
+      res.status(400).json({
+        success: false,
+        message: "Supplier ID is required",
+      });
+      return;
+    }
+
+    // Check if user has purchased from this supplier
+    const hasPurchased = await Commande.findOne({
+      idBuyer: userId,
+      idSupplier: supplierId,
+      status: { $in: ["en cours", "on route", "arrived"] },
+    });
+
+    // Check if user has already rated this supplier
+    const existingRate = await Rate.findOne({
+      id_rater: userId,
+      id_supplier: supplierId,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        canRate: !!hasPurchased,
+        hasRated: !!existingRate,
+        existingRate: existingRate
+          ? {
+              id: existingRate._id,
+              message: existingRate.message,
+              number: existingRate.number,
+              createdAt: existingRate.createdAt,
+            }
+          : null,
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Check can rate supplier error:", err);
     res.status(500).json({
       success: false,
       message: "Internal server error",

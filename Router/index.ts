@@ -6,6 +6,7 @@ import productRoutes from "../Module/Product/Product.routes";
 import commandeRoutes from "../Module/Commande/Commande.routes";
 import notificationRoutes from "../Module/Notification/Notification.routes";
 import adminRoutes from "../Module/Admin/Admin.routes";
+import paymentRoutes from "../Module/Payment/Payment.routes";
 
 const router = Router();
 
@@ -31,6 +32,9 @@ router.use("/notifications", notificationRoutes);
 
 // Admin routes
 router.use("/admin", adminRoutes);
+
+// Payment routes
+router.use("/payments", paymentRoutes);
 
 export default router;
 

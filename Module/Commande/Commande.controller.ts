@@ -98,19 +98,23 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       });
     }
 
-    // Check if all products belong to the same supplier
-    if (supplierIds.size > 1) {
-      res.status(400).json({
-        success: false,
-        message: "All products must be from the same supplier",
-      });
-      return;
-    }
-
+    // Check if we have at least one supplier
     if (supplierIds.size === 0) {
       res.status(400).json({
         success: false,
         message: "No supplier found for the products",
+      });
+      return;
+    }
+
+    // If multiple suppliers, we'll create separate orders for each
+    // But for now, we'll create one order with the first supplier
+    // The frontend should group products by supplier and send separate requests
+    // This maintains backward compatibility
+    if (supplierIds.size > 1) {
+      res.status(400).json({
+        success: false,
+        message: "All products must be from the same supplier. Please group products by supplier and create separate orders.",
       });
       return;
     }

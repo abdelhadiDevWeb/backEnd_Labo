@@ -9,6 +9,7 @@ import {
   updatePassword,
   uploadProfileImage,
   getProfileImage,
+  getSupplierDetails,
 } from "./Supplier.controller";
 import { authenticateToken } from "../../middleware/auth.middleware";
 import { requireSupplier } from "../../middleware/role.middleware";
@@ -92,7 +93,8 @@ const uploadProfileImageMulter = multer({
 // Public routes
 router.post("/register", authRateLimiter, sanitizeBody, registerSupplier);
 
-// Protected routes (require authentication)
+// Protected routes that need to be defined BEFORE /:id to avoid route conflicts
+// Documents routes (require authentication)
 router.post(
   "/documents",
   authenticateToken,
@@ -108,7 +110,26 @@ router.post(
 
 router.get("/documents", authenticateToken, getDocuments);
 
+// Profile image routes (protected - require authentication and supplier role)
+// These MUST be defined before /:id to avoid route conflicts
+router.post(
+  "/profile-image",
+  authenticateToken,
+  requireSupplier,
+  fileUploadRateLimiter,
+  uploadProfileImageMulter.single("image"),
+  validateUploadedFiles(ALLOWED_IMAGE_EXTENSIONS, 1),
+  uploadProfileImage
+);
+
+router.get("/profile-image", authenticateToken, requireSupplier, getProfileImage);
+
+// Get supplier details by ID (public - no authentication required)
+// This MUST be LAST to avoid conflicts with specific routes like /profile-image
+router.get("/:id", getSupplierDetails);
+
 // Profile management routes (require authentication and supplier role)
+// These routes are protected and require both authentication and supplier role
 router.use(authenticateToken);
 router.use(requireSupplier);
 
@@ -129,18 +150,6 @@ router.put(
   validateUpdatePassword,
   updatePassword
 );
-
-// Upload profile image
-router.post(
-  "/profile-image",
-  fileUploadRateLimiter,
-  uploadProfileImageMulter.single("image"),
-  validateUploadedFiles(ALLOWED_IMAGE_EXTENSIONS, 1),
-  uploadProfileImage
-);
-
-// Get profile image
-router.get("/profile-image", getProfileImage);
 
 export default router;
 

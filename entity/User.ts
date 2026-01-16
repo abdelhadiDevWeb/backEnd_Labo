@@ -11,6 +11,9 @@ export interface IUser extends Document {
   role: string;
   status: boolean;
   laboType?: string; // Optional: "Labo médical" or "labo d'ana pathologies" (required for clients, optional for suppliers)
+  rip_post?: string; // RIP Post (default empty)
+  methode_payment?: string[]; // Payment methods array (default empty)
+  rip_bank?: string; // RIP Bank (default empty)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,6 +78,21 @@ const UserSchema = new Schema<IUser>(
       type: String,
       enum: ["Labo médical", "labo d'ana pathologies"],
       required: false, // Optional in schema, but will be validated in controller for clients
+      trim: true,
+    },
+    rip_post: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    methode_payment: {
+      type: [String],
+      default: [],
+      enum: ["cash", "by post", "bank"], // Allowed payment methods
+    },
+    rip_bank: {
+      type: String,
+      default: "",
       trim: true,
     },
   },

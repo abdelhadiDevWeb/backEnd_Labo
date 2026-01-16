@@ -109,6 +109,7 @@ app.use(express.static("uploads/documents"));
 app.use(express.static("uploads/excel"));
 app.use(express.static("uploads/products/images"));
 app.use(express.static("uploads/products/videos"));
+app.use(express.static("uploads/payments"));
 // Ensure upload directories exist
 const uploadDirs = [
   "uploads/images",
@@ -120,6 +121,7 @@ const uploadDirs = [
   "uploads/products/videos",
   "uploads/profile",
   "uploads/profile-images",
+  "uploads/payments",
 ];
 
 uploadDirs.forEach((dir) => {

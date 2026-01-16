@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import User from "../../entity/User";
+import Product from "../../entity/Product";
 import Papier from "../../entity/Papier";
 import Attachment from "../../entity/Attachment";
 import { registerSchema } from "../Client/validation";
@@ -280,7 +282,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const { firstName, lastName, email, phone, address } = req.body;
+    const { firstName, lastName, email, phone, address, rip_post, rip_bank, methode_payment } = req.body;
 
     // Find user
     const user = await User.findById(userId);
@@ -359,6 +361,86 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
       user.address = address.trim();
     }
 
+    // Update payment-related fields
+    if (rip_post !== undefined) {
+      user.rip_post = rip_post.trim();
+    }
+
+    if (rip_bank !== undefined) {
+      user.rip_bank = rip_bank.trim();
+    }
+
+    if (methode_payment !== undefined) {
+      // Validate that methode_payment is an array
+      if (!Array.isArray(methode_payment)) {
+        res.status(400).json({
+          success: false,
+          message: "methode_payment must be an array",
+        });
+        return;
+      }
+      // Validate that all values are allowed
+      const allowedMethods = ["cash", "by post", "bank"];
+      const invalidMethods = methode_payment.filter((method: string) => !allowedMethods.includes(method));
+      if (invalidMethods.length > 0) {
+        res.status(400).json({
+          success: false,
+          message: `Invalid payment methods: ${invalidMethods.join(", ")}. Allowed methods: ${allowedMethods.join(", ")}`,
+        });
+        return;
+      }
+      
+      // Validate required fields based on selected payment methods
+      const hasByPost = methode_payment.includes("by post");
+      const hasBank = methode_payment.includes("bank");
+      
+      // Get current or new values for rip_post and rip_bank
+      const currentRipPost = rip_post !== undefined ? rip_post.trim() : (user.rip_post || "");
+      const currentRipBank = rip_bank !== undefined ? rip_bank.trim() : (user.rip_bank || "");
+      
+      if (hasByPost && !currentRipPost) {
+        res.status(400).json({
+          success: false,
+          message: "RIP Post is required when 'by post' payment method is selected",
+        });
+        return;
+      }
+      
+      if (hasBank && !currentRipBank) {
+        res.status(400).json({
+          success: false,
+          message: "RIP Bank is required when 'bank' payment method is selected",
+        });
+        return;
+      }
+      
+      user.methode_payment = methode_payment;
+    } else {
+      // Even if methode_payment is not being updated, validate existing methods with current rip values
+      const currentMethods = user.methode_payment || [];
+      const hasByPost = currentMethods.includes("by post");
+      const hasBank = currentMethods.includes("bank");
+      
+      const currentRipPost = rip_post !== undefined ? rip_post.trim() : (user.rip_post || "");
+      const currentRipBank = rip_bank !== undefined ? rip_bank.trim() : (user.rip_bank || "");
+      
+      if (hasByPost && !currentRipPost) {
+        res.status(400).json({
+          success: false,
+          message: "RIP Post is required when 'by post' payment method is selected",
+        });
+        return;
+      }
+      
+      if (hasBank && !currentRipBank) {
+        res.status(400).json({
+          success: false,
+          message: "RIP Bank is required when 'bank' payment method is selected",
+        });
+        return;
+      }
+    }
+
     await user.save();
 
     res.status(200).json({
@@ -373,6 +455,9 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
         address: user.address,
         role: user.role,
         status: user.status,
+        rip_post: user.rip_post || "",
+        rip_bank: user.rip_bank || "",
+        methode_payment: user.methode_payment || [],
       },
     });
   } catch (err: unknown) {
@@ -588,9 +673,17 @@ export const uploadProfileImage = async (req: AuthRequest, res: Response): Promi
 export const getProfileImage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.userId;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+      return;
+    }
 
     const attachment = await Attachment.findOne({ id_user: userId });
-    if (!attachment) {
+    if (!attachment || !attachment.image) {
       res.status(404).json({
         success: false,
         message: "Profile image not found",
@@ -598,11 +691,14 @@ export const getProfileImage = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
+    // Ensure the path uses forward slashes (normalize Windows paths)
+    const imagePath = attachment.image.replace(/\\/g, "/");
+
     res.status(200).json({
       success: true,
       data: {
         id: attachment._id,
-        image: attachment.image,
+        image: imagePath,
       },
     });
   } catch (err: unknown) {
@@ -614,3 +710,103 @@ export const getProfileImage = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+// Get supplier details by ID (public endpoint)
+export const getSupplierDetails = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid supplier ID",
+      });
+      return;
+    }
+
+    // Get supplier information
+    const supplier = await User.findById(id).select("-password");
+    if (!supplier) {
+      res.status(404).json({
+        success: false,
+        message: "Supplier not found",
+      });
+      return;
+    }
+
+    // Verify user is a supplier
+    if (supplier.role !== "supplier") {
+      res.status(404).json({
+        success: false,
+        message: "Supplier not found",
+      });
+      return;
+    }
+
+    // Get supplier profile image
+    const attachment = await Attachment.findOne({ id_user: supplier._id });
+    const profileImage = attachment ? attachment.image : null;
+
+    // Get supplier products (only active products with quantity > 0)
+    const products = await Product.find({ supplierId: supplier._id, quantity: { $gt: 0 } })
+      .select("name sellingPrice quantity category brand productType images createdAt")
+      .sort({ createdAt: -1 })
+      .limit(20); // Limit to 20 most recent products
+
+    // Get total products count
+    const totalProducts = await Product.countDocuments({ supplierId: supplier._id });
+
+    // Get total orders count (from commandes)
+    const Commande = (await import("../../entity/Commande")).default;
+    const totalOrders = await Commande.countDocuments({ idSupplier: supplier._id });
+
+    // Calculate total revenue
+    const orders = await Commande.find({ idSupplier: supplier._id }).select("total");
+    const totalRevenue = orders.reduce((sum, order) => {
+      const orderTotal = order.total || 0;
+      return sum + (typeof orderTotal === 'number' ? orderTotal : 0);
+    }, 0);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier: {
+          _id: supplier._id,
+          firstName: supplier.firstName,
+          lastName: supplier.lastName,
+          email: supplier.email,
+          phone: supplier.phone,
+          address: supplier.address,
+          status: supplier.status,
+          profileImage: profileImage,
+          rip_post: supplier.rip_post || "",
+          rip_bank: supplier.rip_bank || "",
+          methode_payment: supplier.methode_payment || [],
+          createdAt: supplier.createdAt,
+        },
+        stats: {
+          totalProducts,
+          totalOrders,
+          totalRevenue,
+          displayedProducts: products.length,
+        },
+        products: products.map((product) => ({
+          _id: product._id,
+          name: product.name,
+          price: product.sellingPrice,
+          quantity: product.quantity,
+          category: product.category,
+          brand: product.brand,
+          productType: product.productType,
+          images: product.images,
+          createdAt: product.createdAt,
+        })),
+      },
+    });
+  } catch (err: unknown) {
+    console.error("Get supplier details error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};

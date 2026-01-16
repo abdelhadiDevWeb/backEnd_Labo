@@ -15,6 +15,9 @@ import {
   resetPassword,
   refreshToken,
   createProblem,
+  createRate,
+  getSupplierRatings,
+  canRateSupplier,
 } from "./Client.controller";
 import { authenticateToken } from "../../middleware/auth.middleware";
 
@@ -73,6 +76,11 @@ router.post(
   ]),
   uploadClientDocuments
 );
+
+// Rating routes
+router.post("/rates", authenticateToken, createRate);
+router.get("/rates/supplier/:supplierId", getSupplierRatings);
+router.get("/rates/can-rate/:supplierId", authenticateToken, canRateSupplier);
 
 export default router;
 
